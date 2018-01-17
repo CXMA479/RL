@@ -12,6 +12,7 @@ import numpy as np
 import mxnet as mx
 
 config = edict()
+config.comments='exceed maximum states again no penalty.'
 config.net=edict()  # ploci approximation networks'
 config.train = edict() # training parameters
 config.env = edict()
@@ -22,20 +23,20 @@ config.env.max_states = 30  # maximum states in a single trial
 
 config.outputPath = '../output'
 config.timeStamp = time.asctime()
-config.debug.debug = not True
+config.debug.debug =   True
 
 config.train.optimizer = 'adam'
-config.train.lr = .001
+config.train.lr = .00001
 config.train.wd = 1E-6
-config.train.batch_size = 2000
+config.train.batch_size = 1000
 config.train.ctx = mx.gpu() # by default
-config.train.callback_batch_size = 90
+config.train.callback_batch_size = 3
 
-config.train.trial = int(2E+6)
-config.train.exploration_trial = 20000
-config.train.exploration_th = .5
-config.train.exploration_mul = .8
-config.train.min_exploration = .1
+config.train.trial = int(5E+4)
+#config.train.exploration_trial = 1000
+#config.train.exploration_th = .7
+#config.train.exploration_mul = .9
+#config.train.min_exploration = .1
 
 config.env.still_reward = -0.04
 

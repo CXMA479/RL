@@ -49,6 +49,7 @@ class BASE_AGENT(object):
 
         self.gradScale_list, self.label_list = [], [] # stacked contents
         self.data_list, self.final_reward_list = [], []
+        self.act_prob_list =[] # track action probability reference2 Monte Carlo Policy Gradient
 
         self.feedback = None   # from environment
 
@@ -103,12 +104,28 @@ class BASE_AGENT(object):
         """
         raise NotImplementedError
 
-    def action(self, net_output):
+    def action(self, net_out):
         """
             take exploration-exploitation
             append a scalar to the trial_action_list
+
+            sample from the net_output to get the final action as a BASIC operation
+            net_output:
+                output by softmax
         """
-        self.trial_action_list.append(act)
+        N=20
+        while True:
+            act_list = np.random.randint(0, self.action_num, (N,))
+            try:
+                idx = list(net_out[act_list] > np.random.uniform(size=(N,))).index(True)
+#            assert 0, idx
+                act = act_list[idx]
+            except:
+                continue
+#            logging.debug('return from sampling')
+            return act
+
+
         #raise NotImplementedError()
 
     def reset(self):
@@ -133,7 +150,7 @@ class BASE_AGENT(object):
 #            print( len(self.data_list) )
             Data[batch_passed] = mx.nd.reshape( self.data_list.pop(0), shape= data_shape )
             label[batch_passed]  = self.label_list.pop(0)
-            outgrad[batch_passed] = self.gradScale_list.pop(0)
+            outgrad[batch_passed] = self.gradScale_list.pop(0)/(0*self.act_prob_list.pop(0) +1 )
             batch_passed  += 1
         return Data, label, outgrad
 
@@ -148,9 +165,9 @@ class RL_metric():
         self.final_reward_list.append(final_reward)
     def check_batch(self):
         #self.batch_passed += 1
-        self.t1=time.time()
-        time_elapsed = self.t1- self.t0
         if self.batch_passed% self.batch_freq==0 and self.batch_passed is not 0: # info the metric...
+            self.t1=time.time()
+            time_elapsed = self.t1- self.t0
             logging.info('trials[%d]\tbatch[%d]\tReward: mean[%.6f], var[%.6f]\t%.2f states/s'%(\
                         len(self.final_reward_list), self.batch_passed, np.mean(self.final_reward_list), np.var(self.final_reward_list), self.batch_size*self.batch_freq/ time_elapsed ) )
             self.final_reward_list = []
@@ -158,8 +175,8 @@ class RL_metric():
         self.batch_passed += 1
 
 
-def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx,\
-                exploration_trial, exploration_mul, exploration_th, min_exploration):
+def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx):
+
     """
         env, agent:
             all instantiated objects
@@ -168,7 +185,6 @@ def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx,\
     """
     final_reward_list=[]
     Loss = mx.gluon.loss.SoftmaxCrossEntropyLoss()
-    exploration_th_0 = exploration_th
     for trial_i in xrange(trial):
         agent.reset()
         env.reset()
@@ -176,17 +192,13 @@ def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx,\
             state = agent.next_state()
             state = state.as_in_context(ctx)
             net_out = net(state) # policy approximation
+            net_out  = mx.nd.softmax(net_out)
             agent.postForward()  # do something e.g. track DataBatch
-            action = agent.action( net_out, exploration_th )      # exploration-exploitation
+            action = agent.action( net_out )      # exploration-exploitation
             feedback = env.Feedback(action)             # response from env
             agent.procFeedback(feedback)        # prepare for next state require, check if terminated
 
-
-        if trial_i % exploration_trial == 0 and trial_i is not 0:
-            exploration_th *= exploration_mul
-            exploration_th = max(min_exploration, exploration_th)
-            logging.info('change exploration to %f'%exploration_th)
-#            assert 0, list(agent.trial_state_list[0].asnumpy().astype(int)[0])
+        if len( metric.final_reward_list ) == 0:
             logging.info('sample state:'+str( [ list(c.asnumpy().astype(int)[0]) for c in agent.trial_state_list+ [agent.next_state()]] ))
         agent.calc_dist()  # according to the reward & states
         metric.update( agent.latest_final_reward )

@@ -17,10 +17,12 @@ from rl_base import BASE_AGENT, BASE_ENV, train_agent, RL_metric
 class chapter17_agt(BASE_AGENT):
     def __init__(self, batch_size, action_num):
         super(chapter17_agt, self).__init__(batch_size, action_num)
+        self.max_state_exceed = False
         self.action_list = np.array([ [0,1],[1,0],[0,-1],[-1,0]]) # indexed by final_action, return coordinate increment
 
     def reset(self):
         super(chapter17_agt, self).reset()
+        self.max_state_exceed = False
         init_state_list = [ [1,1], [2,1], [3,1], [4,1],\
                             [1,2], [3,2],\
                             [1,3], [2,3],[3,3]]
@@ -38,18 +40,14 @@ class chapter17_agt(BASE_AGENT):
         self.data_list.append( copy.deepcopy(self.cur_state_data) )
         self.trial_state_list.append(self.data_list[-1])
 
-    def action(self, net_out, exploration_th):
+    def action(self, net_out):
         # exploration-exploitation
         """
             1. in chapter17( page646), thereis a transition model with probabilties: .8, .1, .1
             2. do exploration
         """
-        intend_action  = int( mx.nd.argmax(net_out, axis=1).asnumpy()[0] )
-        # do exploration
-        if np.random.uniform()< exploration_th:
-            decision_action = np.random.randint(0,4)
-        else:
-            decision_action = intend_action
+        net_out = net_out[0].asnumpy()
+        decision_action = super(chapter17_agt, self).action(net_out) # sample an action
         r= np.random.uniform()
         if r < .8:# doit as it is
             self.final_action = decision_action
@@ -58,11 +56,10 @@ class chapter17_agt(BASE_AGENT):
         else:
             self.final_action = decision_action +1
         self.final_action = self.final_action % len(self.action_list)
-        # track action
+        # track action & probability
         self.trial_action_list.append(self.final_action)
+        self.act_prob_list.append( net_out[self.final_action] )
         # return the next coordinate
-#        print(self.cur_state, self.action_list[self.final_action] )
-#        assert 0, self.action_list
         return self.cur_state + self.action_list[self.final_action]
 
     def procFeedback(self,feedback):
@@ -75,6 +72,7 @@ class chapter17_agt(BASE_AGENT):
         self.trial_reward_list.append(step_reward)
         if self.terminate_state is True: # handle final_reward
             self.latest_final_reward = feedback['final_reward']
+            self.max_state_exceed = feedback['max_state_exceed']
         # prepare for next action
         collision = feedback['collision']
         if not collision: # change cur_state
@@ -98,7 +96,8 @@ class chapter17_agt(BASE_AGENT):
             firstly, we implement textbook's example, use the whole reward as the only factor for decision making
         """
         tt_reward = sum(self.trial_reward_list)+ final_reward
-        self.gradScale_list += [tt_reward for _ in self.trial_reward_list ]
+        grad_mul = 0 if self.max_state_exceed else 1
+        self.gradScale_list += [tt_reward * grad_mul for _ in self.trial_reward_list ]
         self.trial_reward_list, self.trial_action_list, self.trial_state_list = [], [], []
         #print('len: gradScale_list[%d], label_list[%d], data_list[%d]'%(len(self.gradScale_list), len(self.label_list), len(self.data_list)  ))
 
@@ -140,12 +139,15 @@ class chapter17_env(BASE_ENV):
         if list(action) in self.postive_terminal_list:
             self.feedback['terminate_state'] = True
             self.feedback['final_reward'] = self.postive_reward
-        elif list(action) in self.negative_terminal_list or self.state_cnt > cfg.env.max_states:
+        elif list(action) in self.negative_terminal_list :
             self.feedback['terminate_state'] = True
             self.feedback['final_reward'] = self.negative_reward
         else: # step reward...
             self.feedback['terminate_state'] = False
             self.feedback['final_reward'] = None
+
+        self.feedback['max_state_exceed'] = True if self.state_cnt > cfg.env.max_states else False
+
         self.feedback['step_reward']  = self.still_reward
         self.state_cnt += 1
         return self.feedback
@@ -171,7 +173,8 @@ trainer = gluon.Trainer(net.collect_params(), cfg.train.optimizer,
 #, 'momentum': opt.momentum},
 metric = RL_metric(cfg.train.callback_batch_size, cfg.train.batch_size)
 
-train_agent(env, agent, net, trainer, metric, batch_size= cfg.train.batch_size, ctx= cfg.train.ctx, trial=cfg.train.trial, exploration_trial = cfg.train.exploration_trial, exploration_mul = cfg.train.exploration_mul
-, exploration_th=cfg.train.exploration_th, min_exploration= cfg.train.min_exploration)
+train_agent(env, agent, net, trainer, metric, batch_size= cfg.train.batch_size, ctx= cfg.train.ctx, trial=cfg.train.trial)
 
-net.export(os.path.join(sfg.outputPath,cfg.timeStamp))
+
+if not cfg.debug.debug:
+    net.export(os.path.join(cfg.outputPath,cfg.timeStamp))
