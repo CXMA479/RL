@@ -52,8 +52,23 @@ class BASE_AGENT(object):
         self.act_prob_list =[] # track action probability reference2 Monte Carlo Policy Gradient
 
         self.feedback = None   # from environment
-
+        self.init_state_list, self.dump_state = [], []
         pass
+
+    def dump_tab(self, net, ctx):
+        """
+            list the policy table
+            return a dict
+        """
+        cur_state_tmp  = self.cur_state # store for a while...
+        d = {'state':[], 'action':[]}
+        for self.cur_state in self.init_state_list:
+            d['state'].append(self.cur_state)
+            y = net(self.next_state().as_in_context(ctx))
+            act = mx.nd.argmax(y, axis=1).astype(int).asnumpy()[0]
+            d['action'].append(act)
+        self.cur_state = cur_state_tmp
+        return d
 
     def procFeedback(self, feedback):
         """
@@ -143,20 +158,22 @@ class BASE_AGENT(object):
         data_shape = self.data_list[0].shape[1:]
         Data = mx.nd.empty( (self.batch_size,)+ data_shape, dtype=np.float32 )
         label = mx.nd.empty( (self.batch_size, ), dtype=np.float32 )
-        outgrad = mx.nd.empty( (self.batch_size, ) , dtype = np.float32 )
+        outgrad = mx.nd.empty( (self.batch_size, self.action_num) , dtype = np.float32 )
         batch_passed = 0
 #        print('begin gen data for forward...')
         while batch_passed < self.batch_size:
 #            print( len(self.data_list) )
             Data[batch_passed] = mx.nd.reshape( self.data_list.pop(0), shape= data_shape )
             label[batch_passed]  = self.label_list.pop(0)
-            outgrad[batch_passed] = self.gradScale_list.pop(0)/(0*self.act_prob_list.pop(0) +1 )
+            outgrad[batch_passed] = -self.gradScale_list.pop(0)/( self.act_prob_list.pop(0) +1E-4 ) *\
+                                    mx.nd.reshape(mx.nd.one_hot( label[batch_passed], self.action_num ),\
+                                        shape=(-1,) )
             batch_passed  += 1
         return Data, label, outgrad
 
 class RL_metric():
     def __init__(self, batch_freq, batch_size):
-        self.final_reward_list=[] # cause, usually, the trial's length is unpredictable 
+        self.final_reward_list=[] # cause, usually, the trial's length is unpredictable
         self.batch_passed = 0
         self.batch_freq = batch_freq
         self.batch_size = batch_size
@@ -183,8 +200,8 @@ def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx):
         net:
             approximating mx.mod.Module
     """
-    final_reward_list=[]
-    Loss = mx.gluon.loss.SoftmaxCrossEntropyLoss()
+#    final_reward_list=[]
+#    Loss = mx.gluon.loss.SoftmaxCrossEntropyLoss()
     for trial_i in xrange(trial):
         agent.reset()
         env.reset()
@@ -199,7 +216,8 @@ def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx):
             agent.procFeedback(feedback)        # prepare for next state require, check if terminated
 
         if len( metric.final_reward_list ) == 0:
-            logging.info('sample state:'+str( [ list(c.asnumpy().astype(int)[0]) for c in agent.trial_state_list+ [agent.next_state()]] ))
+#            logging.info('sample state:'+str( [ list(c.asnumpy().astype(int)[0]) for c in agent.trial_state_list+ [agent.next_state()]] ))
+            logging.info( ( 'policy table: ',agent.dump_tab(net, ctx)) )
         agent.calc_dist()  # according to the reward & states
         metric.update( agent.latest_final_reward )
 
@@ -208,12 +226,14 @@ def train_agent(env, agent,  net, trainer, metric,  batch_size, trial, ctx):
             continue
         while len(agent.label_list) > batch_size: # dry up the pool for mem space
             Data, label, outgrad = agent.DataBatch_gradScale_batch()
-            Data, label, outgrad =[ _.as_in_context(ctx) for _ in [Data, label, outgrad] ]
+            Data, outgrad =[ _.as_in_context(ctx) for _ in [Data, outgrad] ]
             #assert 0, (Data.shape, label.shape, outgrad.shape)
             with autograd.record():
                 y =net(Data)
-                L = Loss(y, label)
-                L.backward(outgrad)
+                y = mx.nd.softmax(y)
+                y.backward( outgrad   )
+#                L = Loss(y, label)
+#                L.backward(outgrad)
 #                print('backward ends.')
 
 #            logging.info('test logging.')

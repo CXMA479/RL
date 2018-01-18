@@ -19,16 +19,17 @@ class chapter17_agt(BASE_AGENT):
         super(chapter17_agt, self).__init__(batch_size, action_num)
         self.max_state_exceed = False
         self.action_list = np.array([ [0,1],[1,0],[0,-1],[-1,0]]) # indexed by final_action, return coordinate increment
+        self.init_state_list = [ [1,1], [2,1], [3,1], [4,1],\
+                            [1,2], [3,2],\
+                            [1,3], [2,3],[3,3]]
+        self.dump_state_list = self.init_state_list
 
     def reset(self):
         super(chapter17_agt, self).reset()
         self.max_state_exceed = False
-        init_state_list = [ [1,1], [2,1], [3,1], [4,1],\
-                            [1,2], [3,2],\
-                            [1,3], [2,3],[3,3]]
-        idx = np.random.randint(0,len(init_state_list))
+        idx = np.random.randint(0,len(self.init_state_list))
         #self.cur_state = np.array([1,1])  # reset coordinate
-        self.cur_state = np.array(init_state_list[idx])  # reset coordinate
+        self.cur_state = np.array(self.init_state_list[idx])  # reset coordinate
 
     def next_state(self):
         self.cur_state_data = mx.nd.reshape( mx.nd.array(self.cur_state), shape=(1,-1) )
@@ -61,6 +62,11 @@ class chapter17_agt(BASE_AGENT):
         self.act_prob_list.append( net_out[self.final_action] )
         # return the next coordinate
         return self.cur_state + self.action_list[self.final_action]
+
+
+
+
+
 
     def procFeedback(self,feedback):
         """
